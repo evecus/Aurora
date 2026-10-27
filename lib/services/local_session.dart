@@ -96,9 +96,7 @@ class LocalSession {
       );
       _pty = pty;
 
-      terminal.buffer.clear();
-      terminal.buffer.setCursor(0, 0);
-
+      // 不清除历史输出，重连时保留终端内容
       // xterm → PTY
       terminal.onOutput = (data) {
         final bytes = utf8.encode(data);

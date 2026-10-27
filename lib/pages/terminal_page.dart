@@ -142,8 +142,8 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   Future<void> _reconnect() async {
+    // 重连时保留终端内容与当前键盘状态，不主动收起输入法
     await _session.reconnect();
-    _focusWithoutKeyboard();
   }
 
   void _openSftp() {

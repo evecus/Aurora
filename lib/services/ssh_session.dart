@@ -92,9 +92,7 @@ class SshSession {
         ),
       );
 
-      terminal.buffer.clear();
-      terminal.buffer.setCursor(0, 0);
-
+      // 不清除历史输出，重连时保留终端内容
       terminal.onOutput = (data) {
         _shell?.write(utf8.encode(data));
       };
