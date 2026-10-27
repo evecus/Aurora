@@ -269,25 +269,7 @@ class _TerminalPageState extends State<TerminalPage>
           Scaffold(
         backgroundColor: termTheme.background,
         appBar: AppBar(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.server.name,
-                style: const TextStyle(fontSize: 16),
-              ),
-              Text(
-                _isLocal
-                    ? '本地 shell'
-                    : '${widget.server.username}@${widget.server.displayAddr}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
+          title: Text(widget.server.name),
           actions: [
             if (!_isLocal) ...[
               IconButton(
