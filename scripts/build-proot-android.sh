@@ -79,11 +79,18 @@ find_ndk() {
   for candidate in "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
     [ -n "$candidate" ] && [ -d "$candidate" ] && { echo "$candidate"; return; }
   done
-  [ -n "$PINNED_NDK_VERSION" ] || die "请设置 ANDROID_NDK_HOME 或 PROOT_NDK_VERSION"
-  local sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
-  local pinned="$sdk/ndk/$PINNED_NDK_VERSION"
-  [ -d "$pinned" ] || die "未找到 NDK $PINNED_NDK_VERSION：$pinned"
-  echo "$pinned"
+  local sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+  if [ -n "$PINNED_NDK_VERSION" ]; then
+    local pinned="$sdk/ndk/$PINNED_NDK_VERSION"
+    [ -d "$pinned" ] || die "未找到 NDK $PINNED_NDK_VERSION：$pinned"
+    echo "$pinned"
+    return
+  fi
+  # 没指定版本时，用 SDK 里装好的最新一个（CI 上 Gradle 通常已经下好了）。
+  local latest
+  latest="$(ls -1d "$sdk"/ndk/*/ 2>/dev/null | sort -V | tail -n 1)"
+  [ -d "$latest" ] || die "请设置 ANDROID_NDK_HOME / PROOT_NDK_VERSION（未找到 $sdk/ndk/*）"
+  echo "${latest%/}"
 }
 
 sha256() {

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -333,6 +332,9 @@ class LinuxEnv {
           final file = File(path);
           file.parent.createSync(recursive: true);
           file.writeAsBytesSync(entry.content, flush: false);
+        case _TarEntryType.other:
+          // 硬链接 / 设备节点 / pax 头等：minirootfs 用不到，直接跳过。
+          break;
       }
       count++;
       if (count % 200 == 0) {

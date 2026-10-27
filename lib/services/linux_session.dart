@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_pty/flutter_pty.dart';
@@ -113,9 +112,9 @@ class LinuxSession {
       );
       _pty = pty;
 
+      // xterm → PTY（utf8.encode 的结果本身就是 Uint8List）
       terminal.onOutput = (data) {
-        final bytes = utf8.encode(data);
-        _pty?.write(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+        _pty?.write(utf8.encode(data));
       };
 
       terminal.onResize = (width, height, pixelWidth, pixelHeight) {
