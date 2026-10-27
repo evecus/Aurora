@@ -76,3 +76,4 @@ jobs:
         with:
           tag_name: ci
           files: dist/Aurora-arm64-v8a-release.apk
+          overwrite_files: true
