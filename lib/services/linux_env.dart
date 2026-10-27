@@ -61,6 +61,14 @@ class LinuxEnv {
 
   static String get _major => 'v${version.split('.').take(2).join('.')}';
 
+  /// 部署完成标记（写在 rootfs 根目录）。
+  ///
+  /// 不能用 `bin/sh` 判断：Alpine 里它是**绝对**符号链接
+  /// （`bin/sh -> /bin/busybox`），宿主侧解析会跳到 Android 真正的
+  /// `/bin/busybox`（不存在），`existsSync` 永远 false —— 而 proot 会把
+  /// 这个绝对路径翻译回 rootfs 内，所以在容器里它是好的。
+  static const String _markerName = '.aurora-installed';
+
   String get _rootfsUrl =>
       '$mirror/alpine/$_major/releases/$arch/'
       'alpine-minirootfs-$version-$arch.tar.gz';
@@ -142,7 +150,9 @@ class LinuxEnv {
 
   Future<bool> get isInstalled async {
     final dir = await rootfsDir();
-    return File('${dir.path}/bin/sh').existsSync();
+    if (!File('${dir.path}/$_markerName').existsSync()) return false;
+    // busybox 是实体文件（不是链接），宿主侧可见，用它确认 rootfs 完整。
+    return File('${dir.path}/bin/busybox').existsSync();
   }
 
   /// rootfs 占用字节数（递归统计，可能较慢）。
@@ -272,47 +282,92 @@ class LinuxEnv {
     if (received == 0) throw LinuxEnvException('下载内容为空');
   }
 
-  /// 解压 rootfs：优先用系统 gzip+tar，失败回退到 Dart 解压。
+  /// 解压 rootfs：依次尝试三种方式，失败原因会带进错误信息。
   Future<void> _extract(File archive, Directory rootfs) async {
     _setState(LinuxEnvState.extracting, msg: '解压 rootfs…', progress: 0.88);
 
-    final ok = await _extractWithSystemTar(archive, rootfs) ||
-        await _extractWithDart(archive, rootfs);
+    final detail = <String>[];
 
-    if (!ok) throw LinuxEnvException('解压失败');
+    // 1) 系统 gzip | tar（toybox，最快）
+    final r1 = await _extractWithSystemTar(archive, rootfs);
+    detail.add('gzip|tar: ${r1.detail}');
+    var ok = r1.ok;
 
-    if (!File('${rootfs.path}/bin/sh').existsSync()) {
-      throw LinuxEnvException('rootfs 不完整（缺少 /bin/sh）');
+    // 2) Dart 解 gzip，再用系统 tar 解文件（绕开管道 / gzip 缺失）
+    if (!ok) {
+      final r2 = await _extractWithSystemTarFile(archive, rootfs);
+      detail.add('tar: ${r2.detail}');
+      ok = r2.ok;
+    }
+
+    // 3) 纯 Dart 解 tar（最慢，兜底）
+    if (!ok) {
+      final r3 = await _extractWithDart(archive, rootfs);
+      detail.add('dart: ${r3.detail}');
+      ok = r3.ok;
+    }
+
+    final info = detail.join('；');
+    if (!ok) throw LinuxEnvException('解压失败（$info）');
+    if (!File('${rootfs.path}/bin/busybox').existsSync()) {
+      throw LinuxEnvException('rootfs 不完整（缺少 bin/busybox）：$info');
     }
     progressNotifier.value = 0.95;
   }
 
   /// Android 的 toybox 自带 gzip / tar，比 Dart 快得多。
-  Future<bool> _extractWithSystemTar(File archive, Directory rootfs) async {
+  Future<_ExtractResult> _extractWithSystemTar(File archive, Directory rootfs) async {
     try {
       final result = await Process.run('/system/bin/sh', [
         '-c',
         '/system/bin/gzip -dc "${archive.path}" | /system/bin/tar -xf - -C "${rootfs.path}"',
       ]);
       if (result.exitCode == 0) {
-        return File('${rootfs.path}/bin/sh').existsSync();
+        return _ExtractResult(
+          File('${rootfs.path}/bin/busybox').existsSync(),
+          'exit=0',
+        );
       }
-      debugPrint('system tar failed: ${result.exitCode} ${result.stderr}');
+      return _ExtractResult(false, 'exit=${result.exitCode} ${_tail(result.stderr)}');
     } catch (e) {
-      debugPrint('system tar error: $e');
+      return _ExtractResult(false, 'err=$e');
     }
-    return false;
+  }
+
+  /// Dart 解 gzip 成 .tar，再交给系统 tar（没有管道，也没有 gzip 依赖）。
+  Future<_ExtractResult> _extractWithSystemTarFile(
+    File archive,
+    Directory rootfs,
+  ) async {
+    try {
+      final raw = await archive.readAsBytes();
+      final tarBytes = gzip.decode(raw);
+      final tarPath = '${archive.parent.path}/rootfs.tar';
+      await File(tarPath).writeAsBytes(tarBytes);
+      final result = await Process.run(
+        '/system/bin/tar',
+        ['-xf', tarPath, '-C', rootfs.path],
+      );
+      final ok = result.exitCode == 0 &&
+          File('${rootfs.path}/bin/busybox').existsSync();
+      try {
+        File(tarPath).deleteSync();
+      } catch (_) {}
+      return _ExtractResult(ok, 'exit=${result.exitCode} ${_tail(result.stderr)}');
+    } catch (e) {
+      return _ExtractResult(false, 'err=$e');
+    }
   }
 
   /// 纯 Dart 兜底：gzip 用 dart:io，tar 自己解（仅需普通文件/目录/符号链接）。
-  Future<bool> _extractWithDart(File archive, Directory rootfs) async {
+  Future<_ExtractResult> _extractWithDart(File archive, Directory rootfs) async {
     late final Uint8List tarBytes;
     try {
       final raw = await archive.readAsBytes();
       tarBytes = gzip.decode(raw) as Uint8List;
     } catch (e) {
       debugPrint('gzip decode failed: $e');
-      return false;
+      return _ExtractResult(false, 'gzip=$e');
     }
 
     final extractor = _TarReader(tarBytes);
@@ -324,9 +379,12 @@ class LinuxEnv {
           Directory(path).createSync(recursive: true);
         case _TarEntryType.symlink:
           final link = Link(path);
-          if (link.existsSync()) link.deleteSync();
           try {
-            link.createSync(entry.linkName, recursive: true);
+            if (link.existsSync()) link.deleteSync();
+          } catch (_) {}
+          try {
+            File(path).parent.createSync(recursive: true);
+            link.createSync(entry.linkName);
           } catch (_) {}
         case _TarEntryType.file:
           final file = File(path);
@@ -350,7 +408,10 @@ class LinuxEnv {
         await Process.run('/system/bin/chmod', ['-R', '755', dir.path]);
       } catch (_) {}
     }
-    return true;
+    return _ExtractResult(
+      count > 0 && File('${rootfs.path}/bin/busybox').existsSync(),
+      '条目=$count',
+    );
   }
 
   /// 写入 DNS / 软件源 / hosts，让 apk 与网络开箱可用。
@@ -381,7 +442,26 @@ class LinuxEnv {
     // 登录目录。
     final root = Directory('${rootfs.path}/root');
     if (!root.existsSync()) root.createSync(recursive: true);
+
+    // 部署标记（判定是否已安装；bin/sh 是绝对链接，不能用来判断）。
+    File('${rootfs.path}/$_markerName').writeAsStringSync('$version\n');
   }
+}
+
+/// 一次解压尝试的结果，[detail] 会带到错误信息里便于定位。
+class _ExtractResult {
+  const _ExtractResult(this.ok, this.detail);
+
+  final bool ok;
+  final String detail;
+}
+
+/// 截断进程输出的尾部内容，避免错误信息过长。
+String _tail(Object? text) {
+  final s = text?.toString().trim() ?? '';
+  if (s.isEmpty) return '';
+  final oneLine = s.replaceAll(RegExp(r'\s+'), ' ');
+  return oneLine.length <= 120 ? oneLine : oneLine.substring(0, 120);
 }
 
 String _humanBytes(int bytes) {
