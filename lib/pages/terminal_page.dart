@@ -207,19 +207,9 @@ class _TerminalPageState extends State<TerminalPage>
     );
   }
 
-  /// 从 buffer 中提取选区文本（server_box `renderTerminal.selectedText` 等价逻辑）。
+  /// 从 buffer 中提取选区文本，尊重 soft-wrap（isWrapped）不插入多余换行。
   String _selectedText(BufferRange range) {
-    final r = range.normalized;
-    final lines = _session.terminal.buffer.lines;
-    final sb = StringBuffer();
-    for (var y = r.begin.y; y <= r.end.y; y++) {
-      if (y < 0 || y >= lines.length) break;
-      final from = y == r.begin.y ? r.begin.x : 0;
-      final to = y == r.end.y ? r.end.x : null;
-      if (sb.isNotEmpty) sb.write('\n');
-      sb.write(lines[y].getText(from, to));
-    }
-    return sb.toString();
+    return _session.terminal.buffer.getText(range);
   }
 
   Future<bool> _onWillPop() async {
@@ -269,7 +259,10 @@ class _TerminalPageState extends State<TerminalPage>
           Scaffold(
         backgroundColor: termTheme.background,
         appBar: AppBar(
-          title: Text(widget.server.name),
+          title: Text(
+            widget.server.name,
+            style: const TextStyle(fontSize: 16),
+          ),
           actions: [
             if (!_isLocal) ...[
               IconButton(
