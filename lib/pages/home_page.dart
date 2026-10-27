@@ -302,15 +302,6 @@ class _ServerTile extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                           ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      isLocal
-                          ? '本地 shell · 本机'
-                          : '${server.username}@${server.displayAddr}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    ),
                   ],
                 ),
               ),
