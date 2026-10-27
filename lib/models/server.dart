@@ -14,6 +14,9 @@ class Server {
   /// 固定 id，表示本机终端（非 SSH）。
   static const localId = 'local';
 
+  /// 固定 id，表示本机 Linux（proot Alpine）终端（非 SSH）。
+  static const linuxId = 'linux';
+
   Server({
     required this.id,
     required this.name,
@@ -28,6 +31,12 @@ class Server {
   /// 是否为本机终端入口。
   bool get isLocal => id == localId;
 
+  /// 是否为本机 Linux（proot）入口。
+  bool get isLinux => id == linuxId;
+
+  /// 不需要 SSH 连接的本机入口。
+  bool get isOnDevice => isLocal || isLinux;
+
   /// 首页展示用的本机终端实例（不持久化）。
   static final local = Server(
     id: localId,
@@ -37,8 +46,20 @@ class Server {
     username: 'local',
   );
 
-  String get displayAddr =>
-      isLocal ? '本机' : (port == 22 ? host : '$host:$port');
+  /// 首页展示用的本机 Linux 实例（不持久化）。
+  static final linux = Server(
+    id: linuxId,
+    name: 'Linux',
+    host: 'localhost',
+    port: 0,
+    username: 'root',
+  );
+
+  String get displayAddr {
+    if (isLocal) return '本机';
+    if (isLinux) return '本机 Linux（Alpine）';
+    return port == 22 ? host : '$host:$port';
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

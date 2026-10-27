@@ -6,6 +6,8 @@ import 'package:aurora/models/server.dart';
 import 'package:aurora/pages/sftp_page.dart';
 import 'package:aurora/services/settings_store.dart';
 import 'package:aurora/services/local_session.dart';
+import 'package:aurora/services/linux_env.dart';
+import 'package:aurora/services/linux_session.dart';
 import 'package:aurora/services/ssh_session.dart';
 import 'package:aurora/services/virt_key_input_handler.dart';
 import 'package:aurora/widgets/selection_handles.dart';
@@ -51,8 +53,12 @@ class _TerminalPageState extends State<TerminalPage>
   bool _showCopyBar = false;
 
   final _settings = SettingsStore.instance;
+  final _linuxEnv = LinuxEnv.instance;
 
+  /// 会话类型：本机 / Linux(proot) / SSH。
   bool get _isLocal => widget.server.isLocal;
+  bool get _isLinux => widget.server.isLinux;
+  bool get _isServer => !_isLocal && !_isLinux;
 
   @override
   void initState() {
@@ -61,6 +67,8 @@ class _TerminalPageState extends State<TerminalPage>
     _focusNode.addListener(_onFocusChange);
     if (_isLocal) {
       _session = LocalSession();
+    } else if (_isLinux) {
+      _session = LinuxSession();
     } else {
       _session = SshSession(server: widget.server);
     }
@@ -69,8 +77,17 @@ class _TerminalPageState extends State<TerminalPage>
     _session.stateNotifier.addListener(_onState);
     _session.controller.addListener(_onSelectionChanged);
     _settings.addListener(_onSettings);
+    if (_isLinux) {
+      _linuxEnv.stateNotifier.addListener(_onLinux);
+      _linuxEnv.progressNotifier.addListener(_onLinux);
+      _linuxEnv.messageNotifier.addListener(_onLinux);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _session.connect();
+      if (_isLinux) {
+        _prepareLinux();
+      } else {
+        _session.connect();
+      }
       _focusWithoutKeyboard();
     });
   }
@@ -82,10 +99,26 @@ class _TerminalPageState extends State<TerminalPage>
     _session.stateNotifier.removeListener(_onState);
     _session.controller.removeListener(_onSelectionChanged);
     _settings.removeListener(_onSettings);
+    if (_isLinux) {
+      _linuxEnv.stateNotifier.removeListener(_onLinux);
+      _linuxEnv.progressNotifier.removeListener(_onLinux);
+      _linuxEnv.messageNotifier.removeListener(_onLinux);
+    }
     _session.dispose();
     _focusNode.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onLinux() {
+    if (!mounted) return;
+    setState(() {});
+    // 部署（可能由设置页开关触发）完成后自动进入 shell。
+    if (_linuxEnv.state == LinuxEnvState.ready &&
+        _session.state != SshSessionState.connected &&
+        _session.state != SshSessionState.connecting) {
+      _session.connect();
+    }
   }
 
   @override
@@ -141,13 +174,26 @@ class _TerminalPageState extends State<TerminalPage>
     }
   }
 
+  /// Linux：先确保 rootfs 已部署，再连会话。
+  Future<void> _prepareLinux() async {
+    if (_linuxEnv.state == LinuxEnvState.ready) {
+      await _session.connect();
+      return;
+    }
+    await _linuxEnv.install();
+    if (!mounted) return;
+    if (_linuxEnv.state == LinuxEnvState.ready) {
+      await _session.connect();
+    }
+  }
+
   Future<void> _reconnect() async {
     // 重连时保留终端内容与当前键盘状态，不主动收起输入法
     await _session.reconnect();
   }
 
   void _openSftp() {
-    if (_isLocal) return;
+    if (!_isServer) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => SftpPage(server: widget.server),
@@ -213,8 +259,8 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   Future<bool> _onWillPop() async {
-    // 本机终端始终直接退出；SSH 仅在「终端退出确认」开启且已连接时弹窗。
-    if (_isLocal) return true;
+    // 本机 / Linux 始终直接退出；SSH 仅在「终端退出确认」开启且已连接时弹窗。
+    if (!_isServer) return true;
     if (_session.state != SshSessionState.connected) return true;
     if (!_settings.confirmExitTerminal) return true;
 
@@ -264,12 +310,13 @@ class _TerminalPageState extends State<TerminalPage>
             style: const TextStyle(fontSize: 16),
           ),
           actions: [
-            if (!_isLocal) ...[
+            if (_isServer)
               IconButton(
                 tooltip: 'SFTP 文件',
                 icon: const Icon(Icons.folder_outlined),
                 onPressed: _openSftp,
               ),
+            if (!_isLocal) ...[
               IconButton(
                 tooltip: '重连',
                 icon: const Icon(Icons.refresh),
@@ -291,6 +338,37 @@ class _TerminalPageState extends State<TerminalPage>
         ),
         body: Column(
           children: [
+            // Linux：rootfs 尚未部署时先下载解压，再进入 shell。
+            if (_isLinux &&
+                (_linuxEnv.state == LinuxEnvState.downloading ||
+                    _linuxEnv.state == LinuxEnvState.extracting))
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(
+                    minHeight: 2,
+                    value: _linuxEnv.progress <= 0 ? null : _linuxEnv.progress,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    child: Text(
+                      '正在部署 Alpine：${_linuxEnv.message.isEmpty ? _linuxEnv.state.label : _linuxEnv.message}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            if (_isLinux && _linuxEnv.state == LinuxEnvState.failed)
+              MaterialBanner(
+                content: Text(_linuxEnv.error ?? 'Alpine 部署失败'),
+                leading: const Icon(Icons.error_outline),
+                actions: [
+                  TextButton(
+                    onPressed: _prepareLinux,
+                    child: const Text('重试'),
+                  ),
+                ],
+              ),
             if (_session.state == SshSessionState.connecting)
               const LinearProgressIndicator(minHeight: 2),
             if (_session.state == SshSessionState.failed)

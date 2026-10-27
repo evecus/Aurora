@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aurora/models/virt_key_def.dart';
+import 'package:aurora/services/linux_env.dart';
 
 enum AppThemeMode { system, light, dark }
 
@@ -19,6 +20,7 @@ class SettingsStore {
   static const _virtKeyRowsKey = 'virt_key_per_row';
   static const _virtKeyAutoOffKey = 'virt_key_auto_off';
   static const _localTerminalKey = 'enable_local_terminal';
+  static const _linuxTerminalKey = 'enable_linux_terminal';
   static const _exitConfirmKey = 'terminal_exit_confirm';
   static const _homeOrderKey = 'home_list_order';
 
@@ -31,6 +33,12 @@ class SettingsStore {
 
   /// 是否在首页显示「本机终端」入口。
   bool enableLocalTerminal = false;
+
+  /// 是否在首页显示「Linux」入口（proot Alpine）。
+  ///
+  /// 打开时自动部署 rootfs（见 [LinuxEnv.install]），
+  /// 关闭时清理 rootfs（见 [LinuxEnv.uninstall]）。
+  bool enableLinuxTerminal = false;
 
   /// SSH 终端退出时是否弹出断开确认（默认开启；本机终端始终不弹）。
   bool confirmExitTerminal = true;
@@ -86,6 +94,7 @@ class SettingsStore {
     showVirtKeys = prefs.getBool(_virtKeysKey) ?? true;
     virtKeyAutoOff = prefs.getBool(_virtKeyAutoOffKey) ?? true;
     enableLocalTerminal = prefs.getBool(_localTerminalKey) ?? false;
+    enableLinuxTerminal = prefs.getBool(_linuxTerminalKey) ?? false;
     confirmExitTerminal = prefs.getBool(_exitConfirmKey) ?? true;
     final orderRaw = prefs.getString(_homeOrderKey);
     if (orderRaw != null && orderRaw.isNotEmpty) {
@@ -180,6 +189,19 @@ class SettingsStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_localTerminalKey, value);
     _notify();
+  }
+
+  /// 切换 Linux 入口：打开即部署 rootfs，关闭即清理。
+  Future<void> setEnableLinuxTerminal(bool value) async {
+    enableLinuxTerminal = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_linuxTerminalKey, value);
+    _notify();
+    if (value) {
+      await LinuxEnv.instance.install();
+    } else {
+      await LinuxEnv.instance.uninstall();
+    }
   }
 
   Future<void> setConfirmExitTerminal(bool value) async {

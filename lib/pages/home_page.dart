@@ -37,13 +37,17 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() {});
   }
 
-  /// 合并「本机 + 服务器」并按 [SettingsStore.homeListOrder] 排序。
+  /// 合并「本机 + Linux + 服务器」并按 [SettingsStore.homeListOrder] 排序。
   List<Server> _orderedItems() {
     final servers = _store.servers;
     final showLocal = _settings.enableLocalTerminal;
+    final showLinux = _settings.enableLinuxTerminal;
     final byId = {for (final s in servers) s.id: s};
     if (showLocal) {
       byId[Server.localId] = Server.local;
+    }
+    if (showLinux) {
+      byId[Server.linuxId] = Server.linux;
     }
 
     final ordered = <Server>[];
@@ -51,12 +55,17 @@ class _HomePageState extends State<HomePage> {
     for (final id in _settings.homeListOrder) {
       final s = byId[id];
       if (s == null) continue;
-      // 本机关闭时跳过 local
+      // 本机关闭时跳过 local，Linux 关闭时跳过 linux
       if (id == Server.localId && !showLocal) continue;
+      if (id == Server.linuxId && !showLinux) continue;
       ordered.add(s);
       seen.add(id);
     }
-    // 新服务器或首次启用本机：追加到末尾（本机默认插到最前）
+    // 新服务器或首次启用本机/Linux：追加到最前（本机、Linux 总是靠前）
+    if (showLinux && !seen.contains(Server.linuxId)) {
+      ordered.insert(0, Server.linux);
+      seen.add(Server.linuxId);
+    }
     if (showLocal && !seen.contains(Server.localId)) {
       ordered.insert(0, Server.local);
       seen.add(Server.localId);
@@ -185,7 +194,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '点击右下角添加一台，或在设置中启用本机终端',
+                    '点击右下角添加一台，或在设置中启用本机终端 / Linux 终端',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: scheme.outline,
                         ),
@@ -217,7 +226,6 @@ class _HomePageState extends State<HomePage> {
               },
               itemBuilder: (context, index) {
                 final s = items[index];
-                final isLocal = s.isLocal;
                 return Padding(
                   key: ValueKey(s.id),
                   padding: EdgeInsets.only(bottom: index == items.length - 1 ? 0 : 8),
@@ -225,12 +233,13 @@ class _HomePageState extends State<HomePage> {
                     index: index,
                     child: _ServerTile(
                       server: s,
-                      isLocal: isLocal,
+                      isLocal: s.isLocal,
+                      isLinux: s.isLinux,
                       onTap: () => _openTerminal(s),
-                      onSftp: isLocal ? null : () => _openSftp(s),
-                      onSysInfo: isLocal ? null : () => _openSysInfo(s),
-                      onEdit: isLocal ? null : () => _editServer(s),
-                      onDelete: isLocal ? null : () => _deleteServer(s),
+                      onSftp: s.isOnDevice ? null : () => _openSftp(s),
+                      onSysInfo: s.isOnDevice ? null : () => _openSysInfo(s),
+                      onEdit: s.isOnDevice ? null : () => _editServer(s),
+                      onDelete: s.isOnDevice ? null : () => _deleteServer(s),
                     ),
                   ),
                 );
@@ -244,6 +253,7 @@ class _ServerTile extends StatelessWidget {
   const _ServerTile({
     required this.server,
     required this.isLocal,
+    required this.isLinux,
     required this.onTap,
     this.onSftp,
     this.onSysInfo,
@@ -253,6 +263,7 @@ class _ServerTile extends StatelessWidget {
 
   final Server server;
   final bool isLocal;
+  final bool isLinux;
   final VoidCallback onTap;
   final VoidCallback? onSftp;
   final VoidCallback? onSysInfo;
@@ -262,6 +273,21 @@ class _ServerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final badgeColor = isLocal
+        ? scheme.tertiaryContainer
+        : isLinux
+            ? scheme.secondaryContainer
+            : scheme.primaryContainer;
+    final badgeFg = isLocal
+        ? scheme.onTertiaryContainer
+        : isLinux
+            ? scheme.onSecondaryContainer
+            : scheme.onPrimaryContainer;
+    final icon = isLocal
+        ? Icons.phone_android
+        : isLinux
+            ? Icons.computer_outlined
+            : Icons.terminal;
 
     return Card(
       elevation: 0,
@@ -279,17 +305,10 @@ class _ServerTile extends StatelessWidget {
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  color: isLocal
-                      ? scheme.tertiaryContainer
-                      : scheme.primaryContainer,
+                  color: badgeColor,
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(
-                  isLocal ? Icons.phone_android : Icons.terminal,
-                  color: isLocal
-                      ? scheme.onTertiaryContainer
-                      : scheme.onPrimaryContainer,
-                ),
+                child: Icon(icon, color: badgeFg),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -305,7 +324,7 @@ class _ServerTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (!isLocal) ...[
+              if (!isLocal && !isLinux) ...[
                 IconButton(
                   tooltip: '系统信息',
                   icon: Icon(Icons.monitor_heart_outlined, color: scheme.primary),

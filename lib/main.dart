@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:aurora/pages/home_page.dart';
+import 'package:aurora/services/linux_env.dart';
 import 'package:aurora/services/server_store.dart';
 import 'package:aurora/services/settings_store.dart';
 
@@ -7,6 +8,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ServerStore.instance.load();
   await SettingsStore.instance.load();
+  // 只是刷新本机 Linux 的部署状态，部署本身由设置开关触发。
+  await LinuxEnv.instance.refresh();
   runApp(const AuroraApp());
 }
 

@@ -21,6 +21,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // proot 与它的 loader 只能作为文件被执行，不能从 APK 里映射。
+    // minSdk >= 23 时默认不再解包原生库，`nativeLibraryDir` 就不存在，
+    // 两个二进制都没有落脚点（server_box / fl_tty 同样处理）。
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_17
     }
