@@ -318,14 +318,10 @@ class _ServerTile extends StatelessWidget {
                 ),
                 PopupMenuButton<String>(
                   onSelected: (v) {
-                    if (v == 'sysinfo') onSysInfo?.call();
-                    if (v == 'sftp') onSftp?.call();
                     if (v == 'edit') onEdit?.call();
                     if (v == 'delete') onDelete?.call();
                   },
                   itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'sysinfo', child: Text('系统信息')),
-                    PopupMenuItem(value: 'sftp', child: Text('SFTP 文件')),
                     PopupMenuItem(value: 'edit', child: Text('编辑')),
                     PopupMenuItem(value: 'delete', child: Text('删除')),
                   ],

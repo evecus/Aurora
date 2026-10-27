@@ -138,18 +138,6 @@ class _ServerEditPageState extends State<ServerEditPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEdit ? '服务器编辑' : '连接添加'),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('保存'),
-          ),
-        ],
       ),
       body: Form(
         key: _formKey,
