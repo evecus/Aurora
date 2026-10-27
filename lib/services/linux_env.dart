@@ -155,6 +155,25 @@ class LinuxEnv {
     return File('${dir.path}/bin/busybox').existsSync();
   }
 
+  /// proot 的临时目录（宿主侧路径，必须可写）。
+  ///
+  /// proot 启动时要在这里建 glue rootfs（把 /dev /proc /sys 等宿主路径
+  /// 接进容器）。它取 `PROOT_TMP_DIR`，回退 `TMPDIR`，最后是 `/tmp` ——
+  /// Android 上 `/tmp` 不存在也不可写，于是报
+  /// `can't create temporary directory: Permission denied` / `can't create
+  /// glue rootfs`。这里给一个应用自己可写的目录。
+  Future<Directory> prootTmpDir() async {
+    final base = await linuxDir();
+    return Directory('${base.path}/ptmp');
+  }
+
+  /// 确保 proot 临时目录存在，返回其绝对路径。
+  Future<String> ensureProotTmpDir() async {
+    final dir = await prootTmpDir();
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+    return dir.path;
+  }
+
   /// rootfs 占用字节数（递归统计，可能较慢）。
   Future<int> sizeBytes() async {
     final dir = await rootfsDir();
@@ -202,6 +221,7 @@ class LinuxEnv {
 
       final base = await linuxDir();
       if (!base.existsSync()) base.createSync(recursive: true);
+      await ensureProotTmpDir();
       final rootfs = Directory('${base.path}/rootfs');
       // 上一轮解压不完整时直接重建，避免残留文件干扰。
       if (rootfs.existsSync()) rootfs.deleteSync(recursive: true);

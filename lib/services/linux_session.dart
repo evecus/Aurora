@@ -66,9 +66,11 @@ class LinuxSession {
         'TERM': 'xterm-256color',
         'COLORTERM': 'truecolor',
         'LANG': 'C.UTF-8',
-        'TMPDIR': '/tmp',
         'PWD': '/root',
         'USER': 'root',
+        // 注意：TMPDIR 不能写成 '/tmp' —— proot 建 glue rootfs 时读的是
+        // 宿主视角的这个变量，Android 上没有可写的 /tmp。真正的值在
+        // [connect] 里和 PROOT_TMP_DIR 一起指向应用私有目录。
       };
 
   Future<void> connect() async {
@@ -98,6 +100,8 @@ class LinuxSession {
         throw LinuxEnvException('找不到 proot loader（libproot-loader.so）');
       }
       final rootfs = await env.rootfsDir();
+      // 宿主机视角的可写临时目录：proot 在这里建 glue rootfs。
+      final tmpDir = await env.ensureProotTmpDir();
 
       final cols = terminal.viewWidth > 0 ? terminal.viewWidth : 80;
       final rows = terminal.viewHeight > 0 ? terminal.viewHeight : 24;
@@ -105,7 +109,12 @@ class LinuxSession {
       final pty = Pty.start(
         proot,
         arguments: _prootArgs(rootfs.path),
-        environment: {..._env, 'PROOT_LOADER': loader},
+        environment: {
+          ..._env,
+          'PROOT_LOADER': loader,
+          'PROOT_TMP_DIR': tmpDir,
+          'TMPDIR': tmpDir,
+        },
         workingDirectory: rootfs.path,
         rows: rows,
         columns: cols,
