@@ -8,13 +8,15 @@ import 'package:aurora/services/settings_store.dart';
 import 'package:aurora/services/local_session.dart';
 import 'package:aurora/services/ssh_session.dart';
 import 'package:aurora/services/virt_key_input_handler.dart';
+import 'package:aurora/widgets/selection_handles.dart';
 import 'package:aurora/widgets/virt_keys.dart';
 import 'package:xterm/xterm.dart';
 
 /// 完整 SSH 终端页：连接、渲染、虚拟按键、重连。
 ///
 /// 与 server_box 对齐的交互：
-/// - 长按终端：有选区则复制，无选区则粘贴；
+/// - 长按选词，拖动选区两端手柄可调整范围；
+/// - 仅「单击」终端才弹出输入法，长按/选择文本不会弹键盘；
 /// - 虚拟按键条随手机输入法键盘一同显示/消失（输入法弹出时位于其上方）；
 /// - Ctrl / Alt / Shift 点亮后与输入法键盘的字母等按键组合。
 class TerminalPage extends StatefulWidget {
@@ -32,6 +34,9 @@ class _TerminalPageState extends State<TerminalPage>
   late final dynamic _session;
   final _terminalKey = GlobalKey<TerminalViewState>();
   final _focusNode = FocusNode();
+
+  /// 终端滚动控制器：选区手柄需要监听滚动以跟随位置。
+  final _scrollController = ScrollController();
 
   /// 修饰键状态机，同时挂载到 [Terminal.inputHandler]。
   late final VirtKeyInputHandler _inputHandler = VirtKeyInputHandler();
@@ -79,6 +84,7 @@ class _TerminalPageState extends State<TerminalPage>
     _settings.removeListener(_onSettings);
     _session.dispose();
     _focusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -335,6 +341,7 @@ class _TerminalPageState extends State<TerminalPage>
                     key: _terminalKey,
                     controller: _session.controller,
                     focusNode: _focusNode,
+                    scrollController: _scrollController,
                     autofocus: false,
                     // 输入法键盘的输入类型（默认 emailAddress 不合适）。
                     keyboardType: TextInputType.text,
@@ -352,7 +359,16 @@ class _TerminalPageState extends State<TerminalPage>
                     onSecondaryTapUp: (details, offset) =>
                         _onClipboardAction(),
                   ),
-                  // 有选区时浮出工具条：复制 / 全选 / 粘贴。
+                  // 有选区时在选区两端显示可拖动手柄，拖动调整选中范围。
+                  if (_showCopyBar)
+                    Positioned.fill(
+                      child: SelectionHandles(
+                        terminalKey: _terminalKey,
+                        terminal: _session.terminal,
+                        controller: _session.controller,
+                        scrollController: _scrollController,
+                      ),
+                    ),
                 ],
               ),
             ),
