@@ -31,7 +31,7 @@ class Server {
   /// 首页展示用的本机终端实例（不持久化）。
   static final local = Server(
     id: localId,
-    name: '本机终端',
+    name: '本机',
     host: 'localhost',
     port: 0,
     username: 'local',

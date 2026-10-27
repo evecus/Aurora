@@ -137,7 +137,7 @@ class _ServerEditPageState extends State<ServerEditPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEdit ? '服务器编辑' : '连接添加'),
+        title: Text(_isEdit ? '编辑' : '添加'),
       ),
       body: Form(
         key: _formKey,
