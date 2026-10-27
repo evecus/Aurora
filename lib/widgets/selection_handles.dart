@@ -3,9 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
-// RenderTerminal 未在 xterm.dart 中导出，直接引用其源文件。
-// ignore: implementation_imports
-import 'package:xterm/src/ui/render.dart' show RenderTerminal;
 
 /// 终端选区两端的可拖动手柄（类似系统文本选择的水滴图标）。
 ///
