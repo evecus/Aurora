@@ -45,19 +45,27 @@ class LinuxSession {
     stateNotifier.value = s;
   }
 
+  /// 路径是否可访问（exists）；权限不足时当作不存在，不抛异常。
+  static bool _accessible(String path) {
+    try {
+      return Directory(path).existsSync() || File(path).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 传给 proot 的参数（全部默认，不提供配置）。
   static List<String> _prootArgs(String rootfs) {
     // 必须绑定：容器内需要可用的 /dev、/proc、/sys。
     final binds = <String>['/dev:/dev', '/proc:/proc', '/sys:/sys'];
     // 共享存储按需绑定：部分设备没有 /sdcard，绑定不存在的目录会让 proot 直接退出。
+    // Android 上对部分路径 existsSync 会抛 Permission denied，必须吞掉。
     for (final path in const ['/sdcard', '/storage', '/mnt']) {
-      if (Directory(path).existsSync()) binds.add('$path:$path');
+      if (_accessible(path)) binds.add('$path:$path');
     }
     // 部分 ROM 上 /dev/pts、/dev/shm 是独立挂载点，显式绑一次更稳。
     for (final path in const ['/dev/pts', '/dev/shm', '/dev/ashmem']) {
-      if (Directory(path).existsSync() || File(path).existsSync()) {
-        binds.add('$path:$path');
-      }
+      if (_accessible(path)) binds.add('$path:$path');
     }
 
     return [
