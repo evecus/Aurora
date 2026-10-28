@@ -316,7 +316,8 @@ class _TerminalPageState extends State<TerminalPage>
                 icon: const Icon(Icons.folder_outlined),
                 onPressed: _openSftp,
               ),
-            if (!_isLocal) ...[
+            // 仅 SSH 服务器显示重连/断开；本地与 Linux 不显示
+            if (_isServer) ...[
               IconButton(
                 tooltip: '重连',
                 icon: const Icon(Icons.refresh),
