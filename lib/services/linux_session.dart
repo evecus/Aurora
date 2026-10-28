@@ -14,6 +14,10 @@ import 'package:aurora/services/ssh_session.dart' show SshSessionState;
 /// 与 [LocalSession] 同构：真 PTY，支持 resize、交互程序、提示符。
 /// 区别是执行的不是 `/system/bin/sh`，而是
 /// `libproot.so -r rootfs ... /bin/sh -l`。
+///
+/// 若设备已 Root 且 Magisk/su 授权本 App，则通过 `su -c` 以真实 root
+/// 启动 proot，以便 ping / ip 等需要 CAP_NET_* 的命令可用；
+/// 否则回退为普通 uid 启动（fake root `-0`）。
 class LinuxSession {
   LinuxSession();
 
@@ -27,6 +31,9 @@ class LinuxSession {
   SshSessionState get state => _state;
 
   String? errorMessage;
+
+  /// 本次会话是否以真实 root（su）启动。
+  bool runningAsRoot = false;
 
   final ValueNotifier<SshSessionState> stateNotifier =
       ValueNotifier(SshSessionState.idle);
@@ -65,7 +72,7 @@ class LinuxSession {
     ];
   }
 
-  static Map<String, String> get _env => const {
+  static Map<String, String> get _guestEnv => const {
         'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
         'HOME': '/root',
         'SHELL': '/bin/sh',
@@ -79,6 +86,72 @@ class LinuxSession {
         // [connect] 里和 PROOT_TMP_DIR 一起指向应用私有目录。
       };
 
+  /// 宿主侧 proot 运行环境（含 loader / tmp / seccomp）。
+  static Map<String, String> _prootEnv(String loader, String tmpDir) => {
+        ..._guestEnv,
+        'PROOT_LOADER': loader,
+        'PROOT_TMP_DIR': tmpDir,
+        'TMPDIR': tmpDir,
+        // Android 内核 seccomp 会拦截 guest 部分 syscall，表现为
+        // "Bad system call"（ping / nano / 部分 apk 工具常见）。
+        // Termux / proot-distro 同款：关闭 proot 的 seccomp 兼容层。
+        'PROOT_NO_SECCOMP': '1',
+      };
+
+  /// 常见 su 路径（Android / Magisk / KernelSU）。
+  static const _suCandidates = <String>[
+    '/system/bin/su',
+    '/system/xbin/su',
+    '/sbin/su',
+    '/su/bin/su',
+    '/data/local/tmp/su',
+  ];
+
+  /// 定位可用的 su 可执行文件；没有则返回 null。
+  static String? _findSuBinary() {
+    for (final p in _suCandidates) {
+      final f = File(p);
+      if (f.existsSync()) return p;
+    }
+    // PATH 里碰运气（部分 ROM 给 App 配了 su）
+    return null;
+  }
+
+  /// 探测 Magisk/su 是否已授权本 App（短超时，失败即当无 root）。
+  static Future<String?> _detectSu() async {
+    final su = _findSuBinary() ?? 'su';
+    try {
+      final r = await Process.run(
+        su,
+        const ['-c', 'id -u'],
+        runInShell: false,
+      ).timeout(const Duration(seconds: 3));
+      final out = '${r.stdout}'.trim();
+      if (r.exitCode == 0 && out == '0') return su;
+    } on TimeoutException {
+      debugPrint('linux: su detect timeout');
+    } catch (e) {
+      debugPrint('linux: su detect failed: $e');
+    }
+    return null;
+  }
+
+  /// shell 单引号转义：`'foo'bar'` → `'foo'\''bar'`
+  static String _shQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
+
+  /// 拼出 `su -c 'env...; exec proot ...'` 的完整命令字符串。
+  static String _buildSuCommand({
+    required String proot,
+    required List<String> prootArgs,
+    required Map<String, String> environment,
+  }) {
+    final exports = environment.entries
+        .map((e) => 'export ${e.key}=${_shQuote(e.value)}')
+        .join('; ');
+    final exec = 'exec ${_shQuote(proot)} ${prootArgs.map(_shQuote).join(' ')}';
+    return '$exports; $exec';
+  }
+
   Future<void> connect() async {
     if (_state == SshSessionState.connecting ||
         _state == SshSessionState.connected) {
@@ -88,6 +161,7 @@ class LinuxSession {
     _setState(SshSessionState.connecting);
     errorMessage = null;
     _exited = false;
+    runningAsRoot = false;
 
     try {
       final env = LinuxEnv.instance;
@@ -112,23 +186,57 @@ class LinuxSession {
       final cols = terminal.viewWidth > 0 ? terminal.viewWidth : 80;
       final rows = terminal.viewHeight > 0 ? terminal.viewHeight : 24;
 
-      final pty = Pty.start(
-        proot,
-        arguments: _prootArgs(rootfs.path),
-        environment: {
-          ..._env,
-          'PROOT_LOADER': loader,
-          'PROOT_TMP_DIR': tmpDir,
-          'TMPDIR': tmpDir,
-          // Android 内核 seccomp 会拦截 guest 部分 syscall，表现为
-          // "Bad system call"（ping / nano / 部分 apk 工具常见）。
-          // Termux / proot-distro 同款：关闭 proot 的 seccomp 兼容层。
-          'PROOT_NO_SECCOMP': '1',
-        },
-        workingDirectory: rootfs.path,
-        rows: rows,
-        columns: cols,
-      );
+      final prootArgs = _prootArgs(rootfs.path);
+      final prootEnv = _prootEnv(loader, tmpDir);
+
+      // 优先尝试真实 root；失败则回退普通 uid。
+      final su = await _detectSu();
+      late final Pty pty;
+      if (su != null) {
+        final cmd = _buildSuCommand(
+          proot: proot,
+          prootArgs: prootArgs,
+          environment: prootEnv,
+        );
+        debugPrint('linux: starting proot via $su');
+        try {
+          pty = Pty.start(
+            su,
+            arguments: ['-c', cmd],
+            // su 自身环境尽量干净；guest/proot 变量已写进 -c 脚本。
+            environment: {
+              'PATH': '/system/bin:/system/xbin:/sbin:/bin',
+              'TERM': 'xterm-256color',
+            },
+            workingDirectory: rootfs.path,
+            rows: rows,
+            columns: cols,
+          );
+          runningAsRoot = true;
+        } catch (e) {
+          debugPrint('linux: su start failed, fallback: $e');
+          pty = Pty.start(
+            proot,
+            arguments: prootArgs,
+            environment: prootEnv,
+            workingDirectory: rootfs.path,
+            rows: rows,
+            columns: cols,
+          );
+          runningAsRoot = false;
+        }
+      } else {
+        debugPrint('linux: no su, start proot as app uid');
+        pty = Pty.start(
+          proot,
+          arguments: prootArgs,
+          environment: prootEnv,
+          workingDirectory: rootfs.path,
+          rows: rows,
+          columns: cols,
+        );
+        runningAsRoot = false;
+      }
       _pty = pty;
 
       // xterm → PTY（utf8.encode 的结果本身就是 Uint8List）
@@ -153,6 +261,13 @@ class LinuxSession {
       );
 
       unawaited(pty.exitCode.then((_) => _onPtyDone()));
+
+      // 在终端里给一行提示，方便确认是否走了 root。
+      if (runningAsRoot) {
+        terminal.write(
+          '\x1b[32m[Linux] 已通过 su 以 root 启动 proot\x1b[0m\r\n',
+        );
+      }
 
       _setState(SshSessionState.connected);
     } catch (e, st) {
@@ -185,29 +300,23 @@ class LinuxSession {
         } catch (_) {}
       }
       try {
-        pty.kill(ProcessSignal.sighup);
-      } catch (_) {}
-      Future.delayed(const Duration(seconds: 3), () {
-        if (_exited) return;
+        await pty.exitCode.timeout(const Duration(milliseconds: 400));
+      } catch (_) {
         try {
-          pty.kill(ProcessSignal.sigkill);
+          pty.kill();
         } catch (_) {}
-      });
+      }
     }
-
+    _exited = true;
     if (_state != SshSessionState.failed) {
       _setState(SshSessionState.disconnected);
     }
   }
 
-  Future<void> reconnect() async {
-    await close();
-    await Future.delayed(const Duration(milliseconds: 100));
-    await connect();
-  }
-
   void dispose() {
-    close();
+    unawaited(close());
     stateNotifier.dispose();
+    terminal.onOutput = null;
+    terminal.onResize = null;
   }
 }
