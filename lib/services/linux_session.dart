@@ -270,13 +270,6 @@ class LinuxSession {
 
       unawaited(pty.exitCode.then((_) => _onPtyDone()));
 
-      // 在终端里给一行提示，方便确认是否走了 root。
-      if (runningAsRoot) {
-        terminal.write(
-          '\x1b[32m[Linux] 已通过 su 以 root 启动 proot\x1b[0m\r\n',
-        );
-      }
-
       _setState(SshSessionState.connected);
     } catch (e, st) {
       debugPrint('linux session failed: $e\n$st');
