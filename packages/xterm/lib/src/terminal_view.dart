@@ -265,8 +265,20 @@ class TerminalViewState extends State<TerminalView> {
         onComposing: _onComposing,
         onAction: (action) {
           _scrollToBottom();
-          if (action == TextInputAction.done) {
-            widget.terminal.keyInput(TerminalKey.enter);
+          // 手机输入法回车：newline / done / go / send 等均当作 Enter。
+          // 仅处理 done 时，多数 Android/中文键盘的回车无效。
+          switch (action) {
+            case TextInputAction.newline:
+            case TextInputAction.done:
+            case TextInputAction.go:
+            case TextInputAction.send:
+            case TextInputAction.search:
+            case TextInputAction.next:
+            case TextInputAction.previous:
+              widget.terminal.keyInput(TerminalKey.enter);
+              break;
+            default:
+              break;
           }
         },
         onKeyEvent: _handleKeyEvent,
@@ -389,6 +401,13 @@ class TerminalViewState extends State<TerminalView> {
   }
 
   void _onInsert(String text) {
+    // 输入法有时把回车当文本插入（\n / \r），终端需要 keytab 的 Enter（\r）。
+    if (text == '\n' || text == '\r' || text == '\r\n') {
+      widget.terminal.keyInput(TerminalKey.enter);
+      _scrollToBottom();
+      return;
+    }
+
     final key = charToTerminalKey(text.trim());
 
     // On mobile platforms there is no guarantee that virtual keyboard will
