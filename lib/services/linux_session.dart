@@ -46,6 +46,12 @@ class LinuxSession {
     for (final path in const ['/sdcard', '/storage', '/mnt']) {
       if (Directory(path).existsSync()) binds.add('$path:$path');
     }
+    // 部分 ROM 上 /dev/pts、/dev/shm 是独立挂载点，显式绑一次更稳。
+    for (final path in const ['/dev/pts', '/dev/shm', '/dev/ashmem']) {
+      if (Directory(path).existsSync() || File(path).existsSync()) {
+        binds.add('$path:$path');
+      }
+    }
 
     return [
       '--kill-on-exit',
@@ -114,6 +120,10 @@ class LinuxSession {
           'PROOT_LOADER': loader,
           'PROOT_TMP_DIR': tmpDir,
           'TMPDIR': tmpDir,
+          // Android 内核 seccomp 会拦截 guest 部分 syscall，表现为
+          // "Bad system call"（ping / nano / 部分 apk 工具常见）。
+          // Termux / proot-distro 同款：关闭 proot 的 seccomp 兼容层。
+          'PROOT_NO_SECCOMP': '1',
         },
         workingDirectory: rootfs.path,
         rows: rows,
