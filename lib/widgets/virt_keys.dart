@@ -38,15 +38,31 @@ class _VirtKeysBarState extends State<VirtKeysBar> {
   void initState() {
     super.initState();
     _settings.addListener(_onSettings);
+    widget.inputHandler.addListener(_onModifiers);
+  }
+
+  @override
+  void didUpdateWidget(covariant VirtKeysBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.inputHandler != widget.inputHandler) {
+      oldWidget.inputHandler.removeListener(_onModifiers);
+      widget.inputHandler.addListener(_onModifiers);
+    }
   }
 
   @override
   void dispose() {
     _settings.removeListener(_onSettings);
+    widget.inputHandler.removeListener(_onModifiers);
     super.dispose();
   }
 
   void _onSettings() {
+    if (mounted) setState(() {});
+  }
+
+  /// 输入法键盘 / 物理键盘触发修饰键重置后刷新高亮。
+  void _onModifiers() {
     if (mounted) setState(() {});
   }
 

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:xterm/xterm.dart';
 
 /// 虚拟修饰键（Ctrl / Alt / Shift）输入处理器。
@@ -9,43 +10,69 @@ import 'package:xterm/xterm.dart';
 ///
 /// 通过 [Terminal.inputHandler] 挂载，事件在交给
 /// [defaultInputHandler] 之前把修饰键状态合并进去。
-class VirtKeyInputHandler implements TerminalInputHandler {
+///
+/// 继承 [ChangeNotifier]，修饰键状态变化时通知监听者（虚拟按键条），
+/// 保证输入法键盘输入后 Ctrl/Alt/Shift 高亮能及时熄灭。
+class VirtKeyInputHandler extends ChangeNotifier
+    implements TerminalInputHandler {
   VirtKeyInputHandler({this.autoOff = true});
 
   /// 组合生效一次后自动取消修饰键（对齐 server_box 的
   /// `sshVirtualKeyAutoOff` 设置，默认开启）。
   bool autoOff;
 
-  bool ctrl = false;
-  bool alt = false;
-  bool shift = false;
+  bool _ctrl = false;
+  bool _alt = false;
+  bool _shift = false;
 
-  void toggleCtrl() => ctrl = !ctrl;
-  void toggleAlt() => alt = !alt;
-  void toggleShift() => shift = !shift;
+  bool get ctrl => _ctrl;
+  bool get alt => _alt;
+  bool get shift => _shift;
 
-  bool get anyActive => ctrl || alt || shift;
+  void toggleCtrl() {
+    _ctrl = !_ctrl;
+    notifyListeners();
+  }
+
+  void toggleAlt() {
+    _alt = !_alt;
+    notifyListeners();
+  }
+
+  void toggleShift() {
+    _shift = !_shift;
+    notifyListeners();
+  }
+
+  bool get anyActive => _ctrl || _alt || _shift;
 
   /// 取消所有修饰键。
   void resetAll() {
-    ctrl = false;
-    alt = false;
-    shift = false;
+    if (!_ctrl && !_alt && !_shift) return;
+    _ctrl = false;
+    _alt = false;
+    _shift = false;
+    notifyListeners();
   }
 
   /// 仅取消本次事件中实际生效过的修饰键（server_box 同款逻辑）。
   void reset(TerminalKeyboardEvent e) {
-    ctrl = e.ctrl ? false : ctrl;
-    alt = e.alt ? false : alt;
-    shift = e.shift ? false : shift;
+    final nextCtrl = e.ctrl ? false : _ctrl;
+    final nextAlt = e.alt ? false : _alt;
+    final nextShift = e.shift ? false : _shift;
+    if (nextCtrl == _ctrl && nextAlt == _alt && nextShift == _shift) return;
+    _ctrl = nextCtrl;
+    _alt = nextAlt;
+    _shift = nextShift;
+    notifyListeners();
   }
 
   @override
   String? call(TerminalKeyboardEvent event) {
     final e = event.copyWith(
-      ctrl: event.ctrl || ctrl,
-      alt: event.alt || alt,
-      shift: event.shift || shift,
+      ctrl: event.ctrl || _ctrl,
+      alt: event.alt || _alt,
+      shift: event.shift || _shift,
     );
     if (autoOff) reset(e);
     return defaultInputHandler.call(e);

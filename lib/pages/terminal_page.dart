@@ -73,6 +73,7 @@ class _TerminalPageState extends State<TerminalPage>
       _session = SshSession(server: widget.server);
     }
     // 修饰键经 inputHandler 生效：输入法键盘/物理键盘的按键都会带上。
+    _inputHandler.autoOff = _settings.virtKeyAutoOff;
     _session.terminal.inputHandler = _inputHandler;
     _session.stateNotifier.addListener(_onState);
     _session.controller.addListener(_onSelectionChanged);
@@ -151,6 +152,7 @@ class _TerminalPageState extends State<TerminalPage>
   }
 
   void _onSettings() {
+    _inputHandler.autoOff = _settings.virtKeyAutoOff;
     if (mounted) setState(() {});
   }
 
